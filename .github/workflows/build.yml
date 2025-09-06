@@ -24,16 +24,16 @@ on:
         description: "Notice here"
         required: false
         type: string
-      latest:
-        description: "latest"
-        default: true
-        type: boolean
-      prerelease:
-        description: "pre release"
+      stable:
+        description: "stable"
         default: false
         type: boolean
-      clean:
-        description: "clean"
+      beta:
+        description: "beta"
+        default: false
+        type: boolean
+      essential:
+        description: "essential"
         default: false
         type: boolean
 
@@ -43,16 +43,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@main
-
-      - name: Delete releases and workflows runs
-        if: ${{ inputs.clean }}
-        uses: ophub/delete-releases-workflows@main
-        with:
-          delete_releases: true
-          releases_keep_latest: 1
-          delete_workflows: false
-          delete_tags: true
-          gh_token: ${{ secrets.BUILD_TOKEN }}
 
       # Install Dependencies
       - name: Install Dependencies
@@ -73,7 +63,8 @@ jobs:
           df -h
 
       # Get extractor, LKM, Addons, Modules, Theme and Configs
-      - name: Get Dependencies for all Image
+      - name: Get Dependencies for Evolution Image
+        if: ${{ inputs.essential == false }}
         run: |
           . scripts/functions.sh "${{ secrets.BUILD_TOKEN }}"
 
@@ -88,8 +79,6 @@ jobs:
           getTheme "files/p1/boot/grub"
           getBuildroot "evo" "bre"
           echo "BRETAG=${BRTAG}" >> $GITHUB_ENV
-          getBuildroot "minimal" "brm"
-          echo "BRMTAG=${BRTAG}" >> $GITHUB_ENV
 
           # Export Dependencies Version to env
           echo "ADDONTAG=${ADDONTAG}" >> $GITHUB_ENV
@@ -103,15 +92,61 @@ jobs:
 
           echo "OK"
 
-       # Build incremental
-      - name: Build Image Evo
+      # Get extractor, LKM, Addons, Modules, Theme and Configs
+      - name: Get Dependencies for Essential Image
+        if: ${{ inputs.essential == true }}
+        run: |
+          . scripts/functions.sh "${{ secrets.BUILD_TOKEN }}"
+
+          echo "Get Dependencies"
+          getAddons "files/p3/addons"
+          getModules "files/p3/modules"
+          getConfigs "files/p3/configs"
+          getPatches "files/p3/patches"
+          getCustom "files/p3/custom"
+          getOffline "files/p3/configs"
+          getLKMs "files/p3/lkms"
+          getTheme "files/p1/boot/grub"
+          getBuildroot "essential" "bre"
+          echo "BRETAG=${BRTAG}" >> $GITHUB_ENV
+
+          # Export Dependencies Version to env
+          echo "ADDONTAG=${ADDONTAG}" >> $GITHUB_ENV
+          echo "MODULETAG=${MODULETAG}" >> $GITHUB_ENV
+          echo "CONFIGTAG=${CONFIGTAG}" >> $GITHUB_ENV
+          echo "PATCHTAG=${PATCHTAG}" >> $GITHUB_ENV
+          echo "CUSTOMTAG=${CUSTOMTAG}" >> $GITHUB_ENV
+          echo "LKMTAG=${LKMTAG}" >> $GITHUB_ENV
+          echo "THEMETAG=${THEMETAG}" >> $GITHUB_ENV
+          echo "BUILD_TIME=$(date +'%Y-%m-%d %H:%M')" >> $GITHUB_ENV
+
+          # Cleanup
+          rm -f files/p3/modules/*-4.4.180.tgz
+          rm -f files/p3/modules/*-4.4.302.tgz
+          rm -f files/p3/lkms/*-4.4.180-*.tgz
+          rm -f files/p3/lkms/*-4.4.302-*.tgz
+          sed -i 's|Arc |Arc Essential |' files/initrd/opt/arc/include/consts.sh
+          sed -i 's|platforms.yml|platforms-essential.yml|g' files/initrd/opt/arc/include/consts.sh
+          sed -i 's|https://api.github.com/repos/AuxXxilium/arc/releases|https://api.github.com/repos/AuxXxilium/arc-essential/releases|g' files/initrd/opt/arc/include/consts.sh
+          sed -i 's|https://github.com/AuxXxilium/arc/releases/download|https://github.com/AuxXxilium/arc-essential/releases/download|g' files/initrd/opt/arc/include/consts.sh
+          sed -i '/2 \"Beta \${BETATAG}\" \\/d' files/initrd/opt/arc/arc-functions.sh
+          sed -i '/3 "Update Dependencies \\Z1(maybe not stable)\\Zn" \\/d' files/initrd/opt/arc/arc-functions.sh
+
+          echo "OK"
+
+      # Build incremental
+      - name: Build Image
         run: |
           . scripts/functions.sh
 
           # Modify Source File
           ARC_BUILD="$(date +'%y%m%d')"
           ARC_VERSION="${{ inputs.version }}"
-          ARC_BRANCH="evo"
+          if ${{ inputs.essential }}; then
+            ARC_BRANCH="essential"
+          else
+            ARC_BRANCH="evo"
+          fi
           echo "${ARC_BUILD}" > "files/p1/ARC-BUILD"
           echo "ARC_BUILD=${ARC_BUILD}" >> $GITHUB_ENV
           echo "${ARC_VERSION}" > "files/p1/ARC-VERSION"
@@ -131,8 +166,8 @@ jobs:
           sudo mount ${LOOPX}p1 "/tmp/p1"
           sudo mount ${LOOPX}p3 "/tmp/p3"
 
-          [ ! -f "bre/bzImage-arc" ] || [ ! -f "bre/initrd-arc" ] && return 1
-          
+          [ ! -f "bre/bzImage-arc" ] || [ ! -f "bre/initrd-arc" ] && exit 1
+
           echo "Repack initrd"
           cp -f "bre/bzImage-arc" "files/p3/bzImage-arc"
           repackInitrd "bre/initrd-arc" "files/initrd" "files/p3/initrd-arc"
@@ -150,6 +185,11 @@ jobs:
 
           sudo losetup --detach ${LOOPX}
 
+          # echo "Resize Image File"
+          # mv -f "${IMAGE_FILE}" "${IMAGE_FILE}.tmp"
+          # resizeImg "${IMAGE_FILE}.tmp" "+1024M" "${IMAGE_FILE}"
+          # rm -f "${IMAGE_FILE}.tmp"
+
           echo "Image Converter"
           qemu-img convert -p -f raw -O vmdk ${IMAGE_FILE} arc-dyn.vmdk
           qemu-img convert -p -f raw -o subformat=monolithicFlat -O vmdk ${IMAGE_FILE} arc.vmdk
@@ -162,7 +202,7 @@ jobs:
           convertova "${IMAGE_FILE}" "arc.ova"
 
       # Zip image and generate checksum
-      - name: Pack Image Evo
+      - name: Pack Image
         run: |
           if [ -n "${{ env.ARC_VERSION }}" ]; then
             zip -9 "arc-${{ env.ARC_VERSION }}.img.zip" arc.img
@@ -174,22 +214,24 @@ jobs:
             sha256sum update-${{ env.ARC_VERSION }}.zip >"update-${{ env.ARC_VERSION }}.hash"
           fi
 
-      # Publish a release if is a tag
-      - name: Release
-        if: success() && env.ARC_VERSION != ''
+      # Publish a release if beta is true
+      - name: Beta Release
+        if: success() && env.ARC_VERSION != '' && inputs.beta == true
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.ARC_VERSION }}
-          prerelease: ${{ inputs.prerelease }}
-          makeLatest: ${{ inputs.latest }}
+          makeLatest: true
           allowUpdates: true
+          owner: ${{ github.repo.owner }}
+          repo: arc-beta
+          token: ${{ secrets.BUILD_TOKEN }}
           body: |
             ### Note:
               - ${{ inputs.notice }}
 
             ### Information:
-              - Discord Account for Arc Patch needed
-              - Changelog is available in my Discord
+              - Discord account required to use Arc Patch
+              - Full changelog is available in Discord
               - Based on VisionZ Evolution Code
 
             ### Dependencies:
@@ -199,7 +241,79 @@ jobs:
               - Patches: ${{ env.PATCHTAG }}
               - Custom: ${{ env.CUSTOMTAG }}
               - LKMs: ${{ env.LKMTAG }}
-              - Basesystem Evolution: ${{ env.BRETAG }}
+              - Basesystem: ${{ env.BRETAG }}
+
+            ### Release
+              - ${{ env.BUILD_TIME }}
+          artifacts: |
+            arc-*.zip
+            update-*.zip
+            update-*.hash
+
+      # Publish a release if stable is true
+      - name: Stable Release
+        if: success() && env.ARC_VERSION != '' && inputs.stable == true
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.ARC_VERSION }}
+          makeLatest: true
+          allowUpdates: true
+          owner: ${{ github.repo.owner }}
+          repo: arc
+          token: ${{ secrets.BUILD_TOKEN }}
+          body: |
+            ### Note:
+              - ${{ inputs.notice }}
+
+            ### Information:
+              - Discord account required to use Arc Patch
+              - Full changelog is available in Discord
+              - Based on VisionZ Evolution Code
+
+            ### Dependencies:
+              - Addons: ${{ env.ADDONTAG }}
+              - Modules: ${{ env.MODULETAG }}
+              - Configs: ${{ env.CONFIGTAG }}
+              - Patches: ${{ env.PATCHTAG }}
+              - Custom: ${{ env.CUSTOMTAG }}
+              - LKMs: ${{ env.LKMTAG }}
+              - Basesystem: ${{ env.BRETAG }}
+
+            ### Release
+              - ${{ env.BUILD_TIME }}
+          artifacts: |
+            arc-*.zip
+            update-*.zip
+            update-*.hash
+
+      # Publish a release if essential is true
+      - name: Essential Release
+        if: success() && env.ARC_VERSION != '' && inputs.essential == true
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.ARC_VERSION }}
+          makeLatest: true
+          allowUpdates: true
+          owner: ${{ github.repo.owner }}
+          repo: arc-essential
+          token: ${{ secrets.BUILD_TOKEN }}
+          body: |
+            ### Note:
+              - ${{ inputs.notice }}
+
+            ### Information:
+              - Discord account required to use Arc Patch
+              - Full changelog is available in Discord
+              - Based on VisionZ Essential Code
+
+            ### Dependencies:
+              - Addons: ${{ env.ADDONTAG }}
+              - Modules: ${{ env.MODULETAG }}
+              - Configs: ${{ env.CONFIGTAG }}
+              - Patches: ${{ env.PATCHTAG }}
+              - Custom: ${{ env.CUSTOMTAG }}
+              - LKMs: ${{ env.LKMTAG }}
+              - Basesystem: ${{ env.BRETAG }}
 
             ### Release
               - ${{ env.BUILD_TIME }}

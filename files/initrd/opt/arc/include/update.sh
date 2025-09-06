@@ -7,8 +7,8 @@ function updateLoader() {
   if [ "${TAG}" != "zip" ]; then
     if [ -z "${TAG}" ]; then
       idx=0
-      while [ ${idx} -le 5 ]; do # Loop 5 times, if successful, break
-        TAG="$(curl -m 10 -skL "https://api.github.com/repos/AuxXxilium/arc/releases" | jq -r ".[].tag_name" | grep -v "dev" | sort -rV | head -1)"
+      while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
+        TAG="$(curl -m 10 -skL "${API_URL}" | jq -r ".[].tag_name" | grep -v "dev" | sort -rV | head -1)"
         if [ -n "${TAG}" ]; then
           break
         fi
@@ -17,11 +17,11 @@ function updateLoader() {
       done
     fi
     if [ -n "${TAG}" ]; then
-      export URL="https://github.com/AuxXxilium/arc/releases/download/${TAG}/update-${TAG}.zip"
       export TAG="${TAG}"
+      export URL="${UPDATE_URL}/${TAG}/update-${TAG}.zip"
       {
         {
-          curl -kL "${URL}" -o ${TMP_PATH}/update.zip 2>&3 3>&-
+          curl -kL "${URL}" -o "${TMP_PATH}/update.zip" 2>&3 3>&-
         } 3>&1 >&4 4>&- |
         perl -C -lane '
           BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
@@ -37,40 +37,32 @@ function updateLoader() {
         dialog --gauge "Download Update: ${TAG}..." 14 72 4>&-
       } 4>&1
     fi
-    if [ -f "${TMP_PATH}/update.zip" ] && [ $(ls -s "${TMP_PATH}/update.zip" | cut -d' ' -f1) -gt 300000 ]; then
-      if [ "${TAG}" != "zip" ]; then
-        HASHURL="https://github.com/AuxXxilium/arc/releases/download/${TAG}/update-${TAG}.hash"
-        HASH="$(curl -skL "${HASHURL}" | awk '{print $1}')"
-        if [ "${HASH}" != "$(sha256sum "${TMP_PATH}/update.zip" | awk '{print $1}')" ]; then
-          dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
-            --infobox "Update failed - Hash mismatch!\nTry again later." 0 0
-          sleep 3
-          exec reboot
-        fi
+  fi
+  if [ -f "${TMP_PATH}/update.zip" ] && [ $(ls -s "${TMP_PATH}/update.zip" | cut -d' ' -f1) -gt 300000 ]; then
+    if [ "${TAG}" != "zip" ]; then
+      HASH="$(curl -skL "${UPDATE_URL}/${TAG}/update-${TAG}.hash" | awk '{print $1}')"
+      if [ "${HASH}" != "$(sha256sum "${TMP_PATH}/update.zip" | awk '{print $1}')" ]; then
+        dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
+          --infobox "Update failed - Hash mismatch!\nTry again later." 0 0
+        sleep 3
+        exec reboot
       fi
-      rm -rf "/mnt/update"
-      mkdir -p "${TMP_PATH}/update"
+    fi
+    rm -rf "${TMP_PATH}/update"
+    mkdir -p "${TMP_PATH}/update"
+    dialog --backtitle "$(backtitle)" --title "Update Loader" \
+      --infobox "Updating Loader..." 3 50
+    if unzip -oq "${TMP_PATH}/update.zip" -d "${TMP_PATH}/update"; then
+      rm -rf "/mnt/p3/addons" "/mnt/p3/modules" "/mnt/p3/custom" "/mnt/p3/patches" "/mnt/p3/lkms"
+      cp -rf "${TMP_PATH}/update"/* "/mnt"
+      sleep 2
+      rm -rf "${TMP_PATH}/update"
+      rm -f "${TMP_PATH}/update.zip"
+    fi
+    if [ "$(cat "${PART1_PATH}/ARC-VERSION")" = "${TAG}" ] || [ "${TAG}" = "zip" ]; then
       dialog --backtitle "$(backtitle)" --title "Update Loader" \
-        --infobox "Updating Loader..." 3 50
-      if unzip -oq "${TMP_PATH}/update.zip" -d "${TMP_PATH}/update"; then
-        cp -rf "${TMP_PATH}/update"/* "/mnt"
-        rm -rf "${TMP_PATH}/update"
-        rm -f "${TMP_PATH}/update.zip"
-      fi
-      if [ "$(cat "${PART1_PATH}/ARC-VERSION")" = "${TAG}" ] || [ "${TAG}" = "zip" ]; then
-        dialog --backtitle "$(backtitle)" --title "Update Loader" \
-        --infobox "Update Loader successful!" 3 50
-        sleep 2
-      else
-        if [ "${ARC_MODE}" = "update" ]; then
-          dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
-            --infobox "Update failed!\nTry again later." 0 0
-          sleep 3
-          exec reboot
-        else
-          return 1
-        fi
-      fi
+      --infobox "Update Loader successful!" 3 50
+      sleep 2
     else
       if [ "${ARC_MODE}" = "update" ]; then
         dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
@@ -80,6 +72,15 @@ function updateLoader() {
       else
         return 1
       fi
+    fi
+  else
+    if [ "${ARC_MODE}" = "update" ]; then
+      dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
+        --infobox "Update failed!\nTry again later." 0 0
+      sleep 3
+      exec reboot
+    else
+      return 1
     fi
   fi
   [ -n "${ARC_CONF}" ] && cp -f "${TMP_PATH}/bak.yml" "${S_FILE}"
@@ -99,11 +100,180 @@ function updateLoader() {
 }
 
 ###############################################################################
+# Update Loader Beta
+function updateLoaderBeta() {
+  CONFDONE="$(readConfigKey "arc.confdone" "${USER_CONFIG_FILE}")"
+  local TAG="${1}"
+  [ -n "${ARC_CONF}" ] && cp -f "${S_FILE}" "${TMP_PATH}/bak.yml"
+  if [ "${TAG}" != "zip" ]; then
+    if [ -z "${TAG}" ]; then
+      idx=0
+      while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
+        TAG="$(curl -m 10 -skL "${BETA_API_URL}" | jq -r ".[].tag_name" | grep -v "dev" | sort -rV | head -1)"
+        if [ -n "${TAG}" ]; then
+          break
+        fi
+        sleep 3
+        idx=$((${idx} + 1))
+      done
+    fi
+    if [ -n "${TAG}" ]; then
+      export TAG="${TAG}"
+      export URL="${BETA_URL}/${TAG}/update-${TAG}.zip"
+      {
+        {
+          curl -kL "${URL}" -o "${TMP_PATH}/update.zip" 2>&3 3>&-
+        } 3>&1 >&4 4>&- |
+        perl -C -lane '
+          BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
+          $pcent = $F[0];
+          $_ = join "", unpack("x3 a7 x4 a9 x8 a9 x7 a*") if length > 20;
+          s/ /\xa0/g; # replacing space with nbsp as dialog squashes spaces
+          if ($. <= 3) {
+            $header .= "$_\n";
+            $/ = "\r" if $. == 2
+          } else {
+            print "XXX\n$pcent\n$header$_\nXXX"
+          }' 4>&- |
+        dialog --gauge "Download Update: ${TAG}..." 14 72 4>&-
+      } 4>&1
+    fi
+  fi
+  if [ -f "${TMP_PATH}/update.zip" ] && [ $(ls -s "${TMP_PATH}/update.zip" | cut -d' ' -f1) -gt 300000 ]; then
+    if [ "${TAG}" != "zip" ]; then
+      HASH="$(curl -skL "${BETA_URL}/${TAG}/update-${TAG}.hash" | awk '{print $1}')"
+      if [ "${HASH}" != "$(sha256sum "${TMP_PATH}/update.zip" | awk '{print $1}')" ]; then
+        dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
+          --infobox "Update failed - Hash mismatch!\nTry again later." 0 0
+        sleep 3
+        exec reboot
+      fi
+    fi
+    rm -rf "${TMP_PATH}/update"
+    mkdir -p "${TMP_PATH}/update"
+    dialog --backtitle "$(backtitle)" --title "Update Loader" \
+      --infobox "Updating Loader..." 3 50
+    if unzip -oq "${TMP_PATH}/update.zip" -d "${TMP_PATH}/update"; then
+      rm -rf "/mnt/p3/addons" "/mnt/p3/modules" "/mnt/p3/custom" "/mnt/p3/patches" "/mnt/p3/lkms"
+      cp -rf "${TMP_PATH}/update"/* "/mnt"
+      sleep 2
+      rm -rf "${TMP_PATH}/update"
+      rm -f "${TMP_PATH}/update.zip"
+    fi
+    if [ "$(cat "${PART1_PATH}/ARC-VERSION")" = "${TAG}" ] || [ "${TAG}" = "zip" ]; then
+      dialog --backtitle "$(backtitle)" --title "Update Loader" \
+      --infobox "Update Loader successful!" 3 50
+      sleep 2
+    else
+      return 1
+    fi
+  else
+    return 1
+  fi
+  [ -n "${ARC_CONF}" ] && cp -f "${TMP_PATH}/bak.yml" "${S_FILE}"
+  if [ "${ARC_MODE}" = "update" ] && [ "${CONFDONE}" = "true" ]; then
+    dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
+      --infobox "Update Loader successful! -> Reboot to automated Build Mode..." 3 60
+    sleep 3
+    writeConfigKey "arc.builddone" "false" "${USER_CONFIG_FILE}"
+    rebootTo automated
+  else
+    dialog --backtitle "$(backtitle)" --title "Update Loader" --aspect 18 \
+      --infobox "Update Loader successful! -> Reboot to Config Mode..." 3 50
+    sleep 3
+    writeConfigKey "arc.builddone" "false" "${USER_CONFIG_FILE}"
+    rebootTo config
+  fi
+}
+
+###############################################################################
+# Upgrade Loader
+function upgradeLoader() {
+  local TAG="${1}"
+  if [ "${TAG}" != "zip" ]; then
+    if [ -z "${TAG}" ]; then
+      idx=0
+      while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
+        TAG="$(curl -m 10 -skL "${API_URL}" | jq -r ".[].tag_name" | grep -v "dev" | sort -rV | head -1)"
+        if [ -n "${TAG}" ]; then
+          break
+        fi
+        sleep 3
+        idx=$((${idx} + 1))
+      done
+    fi
+    if [ -n "${TAG}" ]; then
+      export TAG="${TAG}"
+      export URL="${UPDATE_URL}/${TAG}/arc-${TAG}.img.zip"
+      {
+        {
+          curl -kL "${URL}" -o "${TMP_PATH}/arc.img.zip" 2>&3 3>&-
+        } 3>&1 >&4 4>&- |
+        perl -C -lane '
+          BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
+          $pcent = $F[0];
+          $_ = join "", unpack("x3 a7 x4 a9 x8 a9 x7 a*") if length > 20;
+          s/ /\xa0/g; # replacing space with nbsp as dialog squashes spaces
+          if ($. <= 3) {
+            $header .= "$_\n";
+            $/ = "\r" if $. == 2
+          } else {
+            print "XXX\n$pcent\n$header$_\nXXX"
+          }' 4>&- |
+        dialog --gauge "Download Loader: ${TAG}..." 14 72 4>&-
+      } 4>&1
+    fi
+  fi
+  if [ -f "${TMP_PATH}/arc.img.zip" ] && [ $(ls -s "${TMP_PATH}/arc.img.zip" | cut -d' ' -f1) -gt 300000 ]; then
+    unzip -oq "${TMP_PATH}/arc.img.zip" -d "${TMP_PATH}"
+    rm -f "${TMP_PATH}/arc.img.zip"
+    dialog --backtitle "$(backtitle)" --title "Upgrade Loader" \
+      --infobox "Installing new Loader Image to all partitions..." 3 60
+    umount "${PART1_PATH}" "${PART2_PATH}" "${PART3_PATH}"
+
+    local IMG_FILE="${TMP_PATH}/arc.img"
+    # Find the parent device (e.g., /dev/sda) for ARC1
+    local DEV1 DEV2 DEV3 DEV
+    DEV1=$(blkid | grep 'LABEL="ARC1"' | cut -d: -f1)
+    DEV2=$(blkid | grep 'LABEL="ARC2"' | cut -d: -f1)
+    DEV3=$(blkid | grep 'LABEL="ARC3"' | cut -d: -f1)
+    # Get the base device (e.g., /dev/sda from /dev/sda1)
+    DEV=$(echo "${DEV1}" | sed 's/[0-9]*$//')
+
+    if [ -b "${DEV}" ] && [ -f "${IMG_FILE}" ]; then
+      # Write the whole image to the device (overwriting all partitions)
+      if dd if="${IMG_FILE}" of="${DEV}" bs=1M conv=fsync; then
+        rm -f "${IMG_FILE}"
+        dialog --backtitle "$(backtitle)" --title "Upgrade Loader" \
+          --infobox "Upgrade done! -> Rebooting..." 3 50
+        sleep 2
+        exec reboot
+      else
+        dialog --backtitle "$(backtitle)" --title "Upgrade Loader" --aspect 18 \
+          --infobox "Upgrade failed!\nTry again later." 0 0
+        sleep 3
+        exec reboot
+      fi
+    else
+      dialog --backtitle "$(backtitle)" --title "Upgrade Loader" --aspect 18 \
+        --infobox "Device not found!\nTry again later." 0 0
+      sleep 3
+      exec reboot
+    fi
+  else
+    dialog --backtitle "$(backtitle)" --title "Upgrade Loader" --aspect 18 \
+      --infobox "Upgrade failed!\nTry again later." 0 0
+    sleep 3
+  fi
+  return 0
+}
+
+###############################################################################
 # Update Addons
 function updateAddons() {
   [ -f "${ADDONS_PATH}/VERSION" ] && local ADDONSVERSION="$(cat "${ADDONS_PATH}/VERSION")" || ADDONSVERSION="0.0.0"
   idx=0
-  while [ ${idx} -le 5 ]; do # Loop 5 times, if successful, break
+  while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
     local TAG="$(curl -m 10 -skL "https://api.github.com/repos/AuxXxilium/arc-addons/releases" | jq -r ".[].tag_name" | sort -rV | head -1)"
     if [ -n "${TAG}" ]; then
       break
@@ -111,12 +281,12 @@ function updateAddons() {
     sleep 3
     idx=$((${idx} + 1))
   done
-  if [ -n "${TAG}" ] && [ "${ADDONSVERSION}" != "${TAG}" ]; then
-    export URL="https://github.com/AuxXxilium/arc-addons/releases/download/${TAG}/addons-${TAG}.zip"
+  if [ -n "${TAG}" ]; then
     export TAG="${TAG}"
+    export URL="https://github.com/AuxXxilium/arc-addons/releases/download/${TAG}/addons-${TAG}.zip"
     {
       {
-      curl -kL "${URL}" -o ${TMP_PATH}/addons.zip 2>&3 3>&-
+        curl -kL "${URL}" -o "${TMP_PATH}/addons.zip" 2>&3 3>&-
       } 3>&1 >&4 4>&- |
       perl -C -lane '
       BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
@@ -138,13 +308,7 @@ function updateAddons() {
       --infobox "Updating Addons..." 3 50
       if unzip -oq "${TMP_PATH}/addons.zip" -d "${ADDONS_PATH}"; then
         rm -f "${TMP_PATH}/addons.zip"
-        for F in $(ls ${ADDONS_PATH}/*.addon 2>/dev/null); do
-          ADDON=$(basename "${F}" | sed 's|.addon||')
-          rm -rf "${ADDONS_PATH}/${ADDON}"
-          mkdir -p "${ADDONS_PATH}/${ADDON}"
-          tar -xaf "${F}" -C "${ADDONS_PATH}/${ADDON}"
-          rm -f "${F}"
-        done
+        updateAddon
         dialog --backtitle "$(backtitle)" --title "Update Addons" \
           --infobox "Update Addons successful!" 3 50
         sleep 2
@@ -163,7 +327,7 @@ function updateAddons() {
 function updatePatches() {
   [ -f "${PATCH_PATH}/VERSION" ] && local PATCHESVERSION="$(cat "${PATCH_PATH}/VERSION")" || PATCHESVERSION="0.0.0"
   idx=0
-  while [ ${idx} -le 5 ]; do # Loop 5 times, if successful, break
+  while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
     local TAG="$(curl -m 10 -skL "https://api.github.com/repos/AuxXxilium/arc-patches/releases" | jq -r ".[].tag_name" | sort -rV | head -1)"
     if [ -n "${TAG}" ]; then
       break
@@ -171,12 +335,12 @@ function updatePatches() {
     sleep 3
     idx=$((${idx} + 1))
   done
-  if [ -n "${TAG}" ] && [ "${PATCHESVERSION}" != "${TAG}" ]; then
-    export URL="https://github.com/AuxXxilium/arc-patches/releases/download/${TAG}/patches-${TAG}.zip"
+  if [ -n "${TAG}" ]; then
     export TAG="${TAG}"
+    export URL="https://github.com/AuxXxilium/arc-patches/releases/download/${TAG}/patches-${TAG}.zip"
     {
       {
-        curl -kL "${URL}" -o ${TMP_PATH}/patches.zip 2>&3 3>&-
+        curl -kL "${URL}" -o "${TMP_PATH}/patches.zip" 2>&3 3>&-
       } 3>&1 >&4 4>&- |
       perl -C -lane '
         BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
@@ -216,7 +380,7 @@ function updatePatches() {
 function updateCustom() {
   [ -f "${CUSTOM_PATH}/VERSION" ] && local CUSTOMVERSION="$(cat "${CUSTOM_PATH}/VERSION")" || CUSTOMVERSION="0.0.0"
   idx=0
-  while [ ${idx} -le 5 ]; do # Loop 5 times, if successful, break
+  while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
     local TAG="$(curl -m 10 -skL "https://api.github.com/repos/AuxXxilium/arc-custom/releases" | jq -r ".[].tag_name" | sort -rV | head -1)"
     if [ -n "${TAG}" ]; then
       break
@@ -224,12 +388,12 @@ function updateCustom() {
     sleep 3
     idx=$((${idx} + 1))
   done
-  if [ -n "${TAG}" ] && [ "${CUSTOMVERSION}" != "${TAG}" ]; then
-    export URL="https://github.com/AuxXxilium/arc-custom/releases/download/${TAG}/custom-${TAG}.zip"
+  if [ -n "${TAG}" ]; then
     export TAG="${TAG}"
+    export URL="https://github.com/AuxXxilium/arc-custom/releases/download/${TAG}/custom-${TAG}.zip"
     {
       {
-        curl -kL "${URL}" -o ${TMP_PATH}/custom.zip 2>&3 3>&-
+        curl -kL "${URL}" -o "${TMP_PATH}/custom.zip" 2>&3 3>&-
       } 3>&1 >&4 4>&- |
       perl -C -lane '
         BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
@@ -271,9 +435,9 @@ function updateModules() {
   local PRODUCTVER="$(readConfigKey "productver" "${USER_CONFIG_FILE}")"
   local PLATFORM="$(readConfigKey "platform" "${USER_CONFIG_FILE}")"
   local KVER="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kver" "${P_FILE}")"
-  [ "${PLATFORM}" = "epyc7002" ] && KVERP="${PRODUCTVER}-${KVER}" || KVERP="${KVER}"
+  is_in_array "${PLATFORM}" "${KVER5L[@]}" && KVERP="${PRODUCTVER}-${KVER}" || KVERP="${KVER}"
   idx=0
-  while [ ${idx} -le 5 ]; do # Loop 5 times, if successful, break
+  while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
     local TAG="$(curl -m 10 -skL "https://api.github.com/repos/AuxXxilium/arc-modules/releases" | jq -r ".[].tag_name" | sort -rV | head -1)"
     if [ -n "${TAG}" ]; then
       break
@@ -281,14 +445,14 @@ function updateModules() {
     sleep 3
     idx=$((${idx} + 1))
   done
-  if [ -n "${TAG}" ] && [ "${MODULESVERSION}" != "${TAG}" ]; then
+  if [ -n "${TAG}" ]; then
+    export TAG="${TAG}"
+    export URL="https://github.com/AuxXxilium/arc-modules/releases/download/${TAG}/modules-${TAG}.zip"
     rm -rf "${MODULES_PATH}"
     mkdir -p "${MODULES_PATH}"
-    export URL="https://github.com/AuxXxilium/arc-modules/releases/download/${TAG}/modules-${TAG}.zip"
-    export TAG="${TAG}"
     {
       {
-        curl -kL "${URL}" -o ${TMP_PATH}/modules.zip 2>&3 3>&-
+        curl -kL "${URL}" -o "${TMP_PATH}/modules.zip" 2>&3 3>&-
       } 3>&1 >&4 4>&- |
       perl -C -lane '
         BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
@@ -340,7 +504,7 @@ function updateConfigs() {
   local USERID="$(readConfigKey "arc.userid" "${USER_CONFIG_FILE}")"
   if [ -z "${1}" ]; then
     idx=0
-    while [ ${idx} -le 5 ]; do # Loop 5 times, if successful, break
+    while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
       local TAG="$(curl -m 10 -skL "https://api.github.com/repos/AuxXxilium/arc-configs/releases" | jq -r ".[].tag_name" | sort -rV | head -1)"
       if [ -n "${TAG}" ]; then
         break
@@ -351,12 +515,12 @@ function updateConfigs() {
   else
     local TAG="${1}"
   fi
-  if [ -n "${TAG}" ] && [ "${CONFIGSVERSION}" != "${TAG}" ]; then
-    export URL="https://github.com/AuxXxilium/arc-configs/releases/download/${TAG}/configs-${TAG}.zip"
+  if [ -n "${TAG}" ]; then
     export TAG="${TAG}"
+    export URL="https://github.com/AuxXxilium/arc-configs/releases/download/${TAG}/configs-${TAG}.zip"
     {
       {
-        curl -kL "${URL}" -o ${TMP_PATH}/configs.zip 2>&3 3>&-
+        curl -kL "${URL}" -o "${TMP_PATH}/configs.zip" 2>&3 3>&-
       } 3>&1 >&4 4>&- |
       perl -C -lane '
         BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
@@ -397,7 +561,7 @@ function updateLKMs() {
   [ -f "${LKMS_PATH}/VERSION" ] && local LKMVERSION="$(cat "${LKMS_PATH}/VERSION")" || LKMVERSION="0.0.0"
   if [ -z "${1}" ]; then
     idx=0
-    while [ ${idx} -le 5 ]; do # Loop 5 times, if successful, break
+    while [ "${idx}" -le 5 ]; do # Loop 5 times, if successful, break
       local TAG="$(curl -m 10 -skL "https://api.github.com/repos/AuxXxilium/arc-lkm/releases" | jq -r ".[].tag_name" | sort -rV | head -1)"
       if [ -n "${TAG}" ]; then
         break
@@ -408,12 +572,12 @@ function updateLKMs() {
   else
     local TAG="${1}"
   fi
-  if [ -n "${TAG}" ] && [ "${LKMVERSION}" != "${TAG}" ]; then
-    export URL="https://github.com/AuxXxilium/arc-lkm/releases/download/${TAG}/rp-lkms.zip"
+  if [ -n "${TAG}" ]; then
     export TAG="${TAG}"
+    export URL="https://github.com/AuxXxilium/arc-lkm/releases/download/${TAG}/rp-lkms.zip"
     {
       {
-        curl -kL "${URL}" -o ${TMP_PATH}/rp-lkms.zip 2>&3 3>&-
+        curl -kL "${URL}" -o "${TMP_PATH}/rp-lkms.zip" 2>&3 3>&-
       } 3>&1 >&4 4>&- |
       perl -C -lane '
         BEGIN {$header = "Downloading $ENV{URL}...\n\n"; $| = 1}
@@ -451,40 +615,68 @@ function updateLKMs() {
 ###############################################################################
 # Update Offline
 function updateOffline() {
-  local ARC_OFFLINE="$(readConfigKey "arc.offline" "${USER_CONFIG_FILE}")"
-  if [ "${ARC_OFFLINE}" != "true" ]; then
-    [ -f "${MODEL_CONFIG_PATH}/data.yml" ] && cp -f "${MODEL_CONFIG_PATH}/data.yml" "${MODEL_CONFIG_PATH}/data.yml.bak" || true
-    curl -skL "https://raw.githubusercontent.com/AuxXxilium/arc-dsm/refs/heads/main/data.yml" -o "${MODEL_CONFIG_PATH}/data.yml"
-    
-    # Check file size and restore backup if necessary
-    local FILESIZE=$(stat -c%s "${MODEL_CONFIG_PATH}/data.yml")
-    if [ "${FILESIZE}" -lt 3072 ]; then
-      cp -f "${MODEL_CONFIG_PATH}/data.yml.bak" "${MODEL_CONFIG_PATH}/data.yml"
+  [ -f "${MODEL_CONFIG_PATH}/data.yml" ] && cp -f "${MODEL_CONFIG_PATH}/data.yml" "${MODEL_CONFIG_PATH}/data.yml.bak" || true
+  if curl -skL "https://raw.githubusercontent.com/AuxXxilium/arc-dsm/refs/heads/main/data.yml" -o "${MODEL_CONFIG_PATH}/data.yml"; then
+    if [ -f "${MODEL_CONFIG_PATH}/data.yml" ]; then
+      local FILESIZE=$(stat -c%s "${MODEL_CONFIG_PATH}/data.yml")
+      if [ "${FILESIZE}" -lt 3072 ]; then
+        [ -f "${MODEL_CONFIG_PATH}/data.yml.bak" ] && cp -f "${MODEL_CONFIG_PATH}/data.yml.bak" "${MODEL_CONFIG_PATH}/data.yml"
+      fi
     fi
+  else
+    [ -f "${MODEL_CONFIG_PATH}/data.yml.bak" ] && cp -f "${MODEL_CONFIG_PATH}/data.yml.bak" "${MODEL_CONFIG_PATH}/data.yml"
   fi
   return 0
 }
 
-###############################################################################
-# Loading Update Mode
-function dependenciesUpdate() {
-  dialog --backtitle "$(backtitle)" --title "Update Dependencies" --aspect 18 \
-    --infobox "Updating Dependencies..." 3 40
-  sleep 2
+# Define descriptions and their corresponding functions
+DEPENDENCY_DESCRIPTIONS=(
+  "Update Addons"
+  "Update Modules"
+  "Update Custom Kernel"
+  "Update Configs"
+  "Update Patches"
+  "Update LKMs"
+  "Update ModelDB"
+)
+DEPENDENCY_FUNCTIONS=(
+  "updateAddons"
+  "updateModules"
+  "updateCustom"
+  "updateConfigs"
+  "updatePatches"
+  "updateLKMs"
+  "updateOffline"
+)
 
-  FAILED="false"
-  for updateFunction in updateAddons updateModules updateCustom updatePatches updateLKMs updateOffline; do
-    $updateFunction || FAILED="true"
+function dependenciesUpdate() {
+  # Build checklist options: index as tag, description as item
+  CHECKLIST_OPTS=()
+  for i in "${!DEPENDENCY_DESCRIPTIONS[@]}"; do
+    CHECKLIST_OPTS+=("$i" "${DEPENDENCY_DESCRIPTIONS[$i]}" "off")
   done
 
-  if [ "${FAILED}" = "true" ]; then
-    dialog --backtitle "$(backtitle)" --title "Update Dependencies" --aspect 18 \
-      --infobox "Update Dependencies failed! Try again later." 3 40
+  # Show dialog with only descriptions
+  CHOICES=$(dialog --backtitle "$(backtitle)" --title "Select Dependencies to Update" \
+    --checklist "Use SPACE to select and ENTER to confirm:" 15 50 6 \
+    "${CHECKLIST_OPTS[@]}" 3>&1 1>&2 2>&3)
+
+  [ $? -ne 0 ] && dialog --infobox "Update canceled by the user." 3 40 && sleep 2 && clear && return
+
+  FAILED=false
+  for idx in $CHOICES; do
+    # Remove quotes if any
+    idx=${idx//\"/}
+    ${DEPENDENCY_FUNCTIONS[$idx]} || FAILED=true
+  done
+
+  if $FAILED; then
+    dialog --infobox "Some updates failed! Try again later." 3 40
   else
-    dialog --backtitle "$(backtitle)" --title "Update Dependencies" --aspect 18 \
-      --infobox "Update Dependencies successful!" 3 40
+    dialog --infobox "All selected updates completed successfully!" 3 40
     writeConfigKey "arc.builddone" "false" "${USER_CONFIG_FILE}"
   fi
+
   sleep 3
   clear
   exec arc.sh

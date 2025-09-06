@@ -186,7 +186,7 @@ function getTheme() {
 }
 
 # Get latest Buildroot
-# $1 type (min for S, ext for X, micro for M)
+# $1 type
 # $2 path
 function getBuildroot() {
   local TYPE="${1}"
@@ -277,45 +277,36 @@ function repackInitrd() {
   sudo rm -rf "${RDXZ_PATH}"
 }
 
-# resizeImg
-# $1 input file  
-# $2 change size MB e.g., +50M -50M
+# resizeimg
+# $1 input file
+# $2 changsize MB eg: +50M -50M
 # $3 output file
 function resizeImg() {
   local INPUT_FILE="${1}"
   local CHANGE_SIZE="${2}"
   local OUTPUT_FILE="${3:-${INPUT_FILE}}"
 
-  [[ -z "${INPUT_FILE}" || ! -f "${INPUT_FILE}" ]] && { echo "Input file not specified or does not exist"; exit 1; }
-  [[ -z "${CHANGE_SIZE}" ]] && { echo "Change size not specified"; exit 1; }
+  [ -z "${INPUT_FILE}" ] || [ ! -f "${INPUT_FILE}" ] && exit 1
+  [ -z "${CHANGE_SIZE}" ] && exit 1
 
   INPUT_FILE="$(realpath "${INPUT_FILE}")"
   OUTPUT_FILE="$(realpath "${OUTPUT_FILE}")"
 
-  local CURRENT_SIZE
-  CURRENT_SIZE=$(du -m "${INPUT_FILE}" | awk '{print $1}')
-  local SIZE
-  SIZE=$((CURRENT_SIZE + ${CHANGE_SIZE//M/}))
+  local SIZE=$(($(du -sm "${INPUT_FILE}" 2>/dev/null | awk '{print $1}')$(echo "${CHANGE_SIZE}" | sed 's/M//g; s/b//g')))
+  [ "${SIZE:-0}" -lt 0 ] && exit 1
 
-  [[ -z "${SIZE}" || "${SIZE}" -lt 0 ]] && { echo "Invalid size calculated"; exit 1; }
-
-  if [[ "${INPUT_FILE}" != "${OUTPUT_FILE}" ]]; then
+  if [ ! "${INPUT_FILE}" = "${OUTPUT_FILE}" ]; then
     sudo cp -f "${INPUT_FILE}" "${OUTPUT_FILE}"
   fi
 
-  sudo truncate -s "${SIZE}M" "${OUTPUT_FILE}"
-
-  # Use `parted` to resize partition 3
-  sudo parted "${OUTPUT_FILE}" --script -- resizepart 3 "${SIZE}M"
-
-  local LOOPX
+  sudo truncate -s ${SIZE}M "${OUTPUT_FILE}"
+  echo -e "d\n\nn\n\n\n\n\nn\nw" | sudo fdisk "${OUTPUT_FILE}" >/dev/null 2>&1
+  local LOOPX LOOPXPY
   LOOPX=$(sudo losetup -f)
   sudo losetup -P "${LOOPX}" "${OUTPUT_FILE}"
-  local PARTITION
-  PARTITION=$(ls "${LOOPX}p3")
-  sudo e2fsck -fp "${PARTITION}"
-  sudo tune2fs -l "${PARTITION}" | grep "Block size"
-  sudo resize2fs "${PARTITION}"
+  LOOPXPY="$(find "${LOOPX}p"* -maxdepth 0 2>/dev/null | sort -n | tail -1)"
+  sudo e2fsck -fp "${LOOPXPY:-${LOOPX}p3}"
+  sudo resize2fs "${LOOPXPY:-${LOOPX}p3}"
   sudo losetup -d "${LOOPX}"
 }
 
@@ -326,7 +317,7 @@ function createvmx() {
   BLIMAGE=${1}
   VMNAME=${2}
 
-  if ! command -v qemu-img &>/dev/null; then
+  if ! type -p qemu-img >/dev/null 2>&1; then
     sudo apt install -y qemu-utils
   fi
 

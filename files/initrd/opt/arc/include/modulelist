@@ -14,9 +14,7 @@ F kvm.ko
 
 # acpi
 N acpi_call.ko
-N acpi-cpufreq.ko
-N processor.ko
-N button.ko
+N acpi_cpufreq.ko
 
 # cpufreq
 N cpufreq_governor.ko
@@ -29,6 +27,8 @@ N cpufreq_stats.ko
 
 # misc
 N check_signature.ko
+N rfkill.ko
+N rfkill-gpio.ko
 
 # sensors
 N coretemp.ko
@@ -44,8 +44,13 @@ N nct6775.ko
 F mii.ko
 F cdc_ether.ko
 F rndis_host.ko
+F thunderbolt.ko
+F thunderbolt-net.ko
 F r8152.ko
 F aqc111.ko
+F ax88179_178a.ko
+F aic_load_fw.ko
+F aic8800_fdrv.ko
 
 ## i915
 #N dmabuf.ko
